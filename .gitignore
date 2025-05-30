@@ -9,7 +9,7 @@ venv/
 env/
 ENV/
 *.env
-.env
+
 
 # Django
 *.sqlite3
