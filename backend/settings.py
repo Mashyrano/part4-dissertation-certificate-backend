@@ -39,6 +39,9 @@ CORS_ALLOWED_ORIGINS = [
     "https://dissertationtest-*.vercel.app",  # optional: allow preview deployments
     "http://localhost:3000",  # keep if you're still testing locally
 ]
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https:\/\/.*\.vercel\.app$",
+]
 
 CORS_ALLOW_CREDENTIALS = True
 
