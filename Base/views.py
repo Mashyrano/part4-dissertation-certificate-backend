@@ -48,12 +48,14 @@ def register_institution_request(request):
     
     return JsonResponse({"error": "Invalid request method."}, status=400)
 
+@csrf_exempt
 @api_view(['GET'])
 def institution_requests(request):
     pending = PendingInstitution.objects.filter(approved=False)
     serializer = PendingInstitutionSerializer(pending, many=True)
     return Response(serializer.data)
 
+@csrf_exempt
 @api_view(['POST'])
 def approve_institution(request, institution_id):
     try:
@@ -63,13 +65,15 @@ def approve_institution(request, institution_id):
         return Response({'message': 'Institution approved'}, status=status.HTTP_200_OK)
     except PendingInstitution.DoesNotExist:
         return Response({'error': 'Institution not found'}, status=status.HTTP_404_NOT_FOUND)
-    
+
+@csrf_exempt   
 @api_view(['GET'])
 def approved_institutions(request):
     institutions = PendingInstitution.objects.filter(approved=True, revoked=False)
     serializer = PendingInstitutionSerializer(institutions, many=True)
     return Response(serializer.data)
 
+@csrf_exempt
 @api_view(["POST"])
 def revoke_institution(request, institution_id):
     try:
@@ -79,7 +83,8 @@ def revoke_institution(request, institution_id):
         return Response({'message': 'Institution approved'}, status=status.HTTP_200_OK)
     except PendingInstitution.DoesNotExist:
         return Response({'error': 'Institution not found'}, status=status.HTTP_404_NOT_FOUND)
-    
+
+@csrf_exempt 
 @api_view(['GET'])
 def get_institution_by_address(request):
     eth_address = request.GET.get("address")
