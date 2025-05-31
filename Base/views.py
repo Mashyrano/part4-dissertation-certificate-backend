@@ -12,9 +12,11 @@ from django.shortcuts import get_object_or_404
 from django.core.files.storage import default_storage
 from concurrent.futures import ThreadPoolExecutor
 import tempfile, os, json, csv, hashlib
+from django.http import HttpResponse
 
 from .helper import generate_certificate_pdf_local, process_single_entry
 from .helper import upload_to_pinata, download_pdf_from_ipfs, merge_overlay, create_overlay
+from .helper import upload_json_to_pinata
 
 @csrf_exempt
 def register_institution_request(request):
@@ -120,10 +122,10 @@ def issue_certificate(request):
     filename = f"{name}_{surname}_{course}.pdf".replace(" ", "_")
     pdf_path = os.path.join(tempfile.gettempdir(), filename)
 
-    # 🧪 Step 1: Generate the clean certificate (no CID, no QR)
+    # 🧪 Step 1: Generate PDF with dummy QR code (no IPFS CID yet)
     generate_certificate_pdf_local(
         pdf_path,
-        f"{name} {surname} {course}",
+        f"{name} {surname}",
         course,
         degree_class,
         institution_name,
@@ -133,10 +135,25 @@ def issue_certificate(request):
         qr_mode="dummy",
     )
 
-    # ☁️ Step 3: Upload clean file (preserves CID)
-    uploaded_url = upload_to_pinata(pdf_path)
+    # ☁️ Step 2: Upload the PDF to IPFS
+    pdf_ipfs_url = upload_to_pinata(pdf_path)
 
-    # 💾 Step 4: Save certificate record
+    # 🧾 Step 3: Create metadata JSON
+    metadata = {
+        "student_name": name,
+        "student_surname": surname,
+        "reg_number": reg_number,
+        "course": course,
+        "degree_class": degree_class,
+        "institution": institution_name,
+        "date_issued": date_issued,
+        "pdf_ipfs_url": pdf_ipfs_url,
+    }
+
+    # ☁️ Step 4: Upload metadata JSON to IPFS
+    metadata_ipfs_url = upload_json_to_pinata(metadata)
+
+    # 💾 Step 5: Save the certificate to the database (optional)
     Certificate.objects.create(
         student_name=name,
         student_surname=surname,
@@ -147,24 +164,33 @@ def issue_certificate(request):
 
     return JsonResponse({
         "message": "Certificate issued",
-        "ipfs_url": uploaded_url,
+        "ipfs_url": metadata_ipfs_url,  # This is the CID to store on-chain
+        "pdf_url": pdf_ipfs_url,
     })
 
 @csrf_exempt
 def update_certificate_with_cid(request):
-    data = json.loads(request.body)
-    new_cid = data["new_cid"]
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=400)
 
-    # 1. Download original PDF
-    pdf_path = download_pdf_from_ipfs(new_cid)
+    try:
+        data = json.loads(request.body)
+        new_cid = data["new_cid"]
 
-    # 2. Create overlay with new CID
-    new_verification_url = f"https://gateway.pinata.cloud/ipfs/{new_cid}"
-    overlay_buffer = create_overlay(new_verification_url, new_cid)
+        # 1. Download original PDF from IPFS
+        pdf_path = download_pdf_from_ipfs(new_cid)
 
-    # 3. Merge and return updated PDF
-    final_pdf_path = merge_overlay(pdf_path, overlay_buffer)
-    return FileResponse(open(final_pdf_path, "rb"), as_attachment=True, filename=f"updated_certificate.pdf")
+        # 2. Generate overlay with new QR + CID
+        new_verification_url = f"https://gateway.pinata.cloud/ipfs/{new_cid}"
+        overlay_buffer = create_overlay(new_verification_url, new_cid)
+
+        # 3. Merge and return the new updated certificate
+        final_pdf_path = merge_overlay(pdf_path, overlay_buffer)
+
+        return FileResponse(open(final_pdf_path, "rb"), as_attachment=True, filename="updated_certificate.pdf")
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
 
 #### mass upload
 @csrf_exempt
@@ -186,4 +212,24 @@ def batch_upload_certificates(request):
     with ThreadPoolExecutor(max_workers=10) as executor:
         results = list(executor.map(lambda entry: process_single_entry(entry, institution), student_data))
 
-    return JsonResponse({"results": results}, safe=False)
+    # ✅ Prepare downloadable CSV with IPFS CIDs
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = 'attachment; filename="batch_upload_results.csv"'
+
+    writer = csv.writer(response)
+    writer.writerow(["student_name", "student_surname", "reg_number", "course", "degree_class", "ipfs_cid", "status"])
+
+    for r in results:
+        entry = next((e for e in student_data if e["reg_number"] == r["reg_number"]), {})
+        writer.writerow([
+            entry.get("student_name", ""),
+            entry.get("student_surname", ""),
+            entry.get("reg_number", ""),
+            entry.get("course", ""),
+            entry.get("degree_class", ""),
+            r.get("cid", ""),
+            r.get("status", "")
+        ])
+
+    return response
+

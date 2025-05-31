@@ -9,7 +9,7 @@ import tempfile
 from PyPDF2 import PdfReader, PdfWriter, PageObject
 from .models import Certificate
 from datetime import datetime
-
+import json
 PINATA_JWT = os.getenv("PINATA_JWT")
 
 def upload_to_pinata(file_path):
@@ -97,69 +97,93 @@ def generate_certificate_pdf_local(pdf_path, student_name, course_name, degree_c
     with open(pdf_path, "wb") as f:
         f.write(buffer.getvalue())
 
+# new metadata
+def generate_metadata_dict(name, surname, reg_number, course, degree_class, institution_name, date_issued):
+    return {
+        "student_name": name,
+        "student_surname": surname,
+        "registration_number": reg_number,
+        "course": course,
+        "degree_class": degree_class,
+        "institution": institution_name,
+        "date_issued": date_issued,
+    }
+
+def upload_json_to_pinata(metadata: dict) -> str:
+    url = "https://api.pinata.cloud/pinning/pinJSONToIPFS"
+    headers = {
+        "Authorization": PINATA_JWT,         
+        "Content-Type": "application/json",
+    }
+    response = requests.post(url, headers=headers, data=json.dumps(metadata))
+    if response.status_code == 200:
+        return f"https://gateway.pinata.cloud/ipfs/{response.json()['IpfsHash']}"
+    else:
+        raise Exception(f"Pinata JSON upload failed: {response.text}")
+
 def download_pdf_from_ipfs(cid):
     gateways = [
         f"https://ipfs.io/ipfs/{cid}",
         f"https://cloudflare-ipfs.com/ipfs/{cid}",
         f"https://gateway.pinata.cloud/ipfs/{cid}",
-        f"https://{cid}.ipfs.dweb.link",  # 4th fallback
+        f"https://{cid}.ipfs.dweb.link",
     ]
 
-    for gateway_url in gateways:
+    for url in gateways:
         try:
-            print(f"⏳ Trying gateway: {gateway_url}")
-            response = requests.get(gateway_url, timeout=15)
+            print(f"⏳ Trying: {url}")
+            response = requests.get(url, timeout=15)
             response.raise_for_status()
-            # Save to temp PDF
-            temp_pdf_path = os.path.join(tempfile.gettempdir(), f"{cid}.pdf")
-            with open(temp_pdf_path, "wb") as f:
+
+            temp_path = os.path.join(tempfile.gettempdir(), f"{cid}.pdf")
+            with open(temp_path, "wb") as f:
                 f.write(response.content)
-            print(f"✅ Success with: {gateway_url}")
-            return temp_pdf_path
+
+            print(f"✅ Fetched from: {url}")
+            return temp_path
+
         except Exception as e:
-            print(f"⚠️ Failed with {gateway_url}: {e}")
+            print(f"❌ Failed with {url}: {e}")
             continue
 
-    raise Exception("❌ Failed to download PDF from all IPFS gateways.")
+    raise Exception("All IPFS gateways failed.")
+
 
 def create_overlay(qr_url, cid):
-    overlay_buffer = io.BytesIO()
-    c = canvas.Canvas(overlay_buffer, pagesize=letter)
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
 
-    # Draw new CID and QR
     c.setFont("Courier", 12)
     c.drawCentredString(300, 450, f"ipfs-CID: {cid}")
 
     qr = qrcode.make(qr_url)
-    qr_path = os.path.join(tempfile.gettempdir(), "temp_qr.png")
-    qr.save(qr_path)
-    c.drawInlineImage(qr_path, 450, 50, width=100, height=100)
-    os.remove(qr_path)
+    tmp_qr_path = os.path.join(tempfile.gettempdir(), "qr_temp.png")
+    qr.save(tmp_qr_path)
+    c.drawInlineImage(tmp_qr_path, 450, 50, width=100, height=100)
+    os.remove(tmp_qr_path)
 
     c.save()
-    overlay_buffer.seek(0)
-    return overlay_buffer
+    buffer.seek(0)
+    return buffer
 
 def merge_overlay(original_pdf_path, overlay_buffer):
-    # Read original and overlay
-    original = PdfReader(original_pdf_path)
-    overlay_pdf = PdfReader(overlay_buffer)
+    reader = PdfReader(original_pdf_path)
+    overlay_reader = PdfReader(overlay_buffer)
     writer = PdfWriter()
 
-    for i, page in enumerate(original.pages):
-        if i == 0:  # Only overlay the first page
-            page.merge_page(overlay_pdf.pages[0])
+    for i, page in enumerate(reader.pages):
+        if i == 0:
+            page.merge_page(overlay_reader.pages[0])
         writer.add_page(page)
 
-    # Save the new PDF
-    new_pdf_path = original_pdf_path.replace(".pdf", "_updated.pdf")
-    with open(new_pdf_path, "wb") as f:
+    output_path = original_pdf_path.replace(".pdf", "_updated.pdf")
+    with open(output_path, "wb") as f:
         writer.write(f)
-    return new_pdf_path
+
+    return output_path
 
 def process_single_entry(entry, institution):
     start = time.time()
-    
     try:
         name = entry["student_name"]
         surname = entry["student_surname"]
@@ -183,8 +207,25 @@ def process_single_entry(entry, institution):
             qr_mode="dummy",
         )
 
-        uploaded_url = upload_to_pinata(pdf_path)
+        # Upload PDF to IPFS
+        pdf_ipfs_url = upload_to_pinata(pdf_path)
 
+        # Create metadata
+        metadata = {
+            "student_name": name,
+            "student_surname": surname,
+            "reg_number": reg_number,
+            "course": course,
+            "degree_class": degree_class,
+            "institution": institution.name,
+            "date_issued": date_issued,
+            "pdf_ipfs_url": pdf_ipfs_url,
+        }
+
+        # Upload metadata to IPFS
+        metadata_ipfs_url = upload_json_to_pinata(metadata)
+
+        # Save to DB (optional)
         Certificate.objects.create(
             student_name=name,
             student_surname=surname,
@@ -192,8 +233,16 @@ def process_single_entry(entry, institution):
             course=course,
             degree_class=degree_class,
         )
-        # processing logic...
+
         print(f"⏱️ Processed {reg_number} in {time.time() - start:.2f}s")
-        return {"reg_number": reg_number, "cid": uploaded_url.split("/")[-1], "status": "success"}
+        return {
+            "reg_number": reg_number,
+            "cid": metadata_ipfs_url.split("/")[-1],
+            "status": "success"
+        }
+
     except Exception as e:
-        return {"reg_number": entry.get("reg_number", "N/A"), "status": f"error: {str(e)}"}
+        return {
+            "reg_number": entry.get("reg_number", "N/A"),
+            "status": f"error: {str(e)}"
+        }
