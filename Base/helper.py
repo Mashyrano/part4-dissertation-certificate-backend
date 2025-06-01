@@ -131,7 +131,7 @@ def download_pdf_from_ipfs(cid):
 
     for url in gateways:
         try:
-            print(f"⏳ Trying: {url}")
+            print(f"⏳ Trying PDF gateway: {url}")
             response = requests.get(url, timeout=15)
             response.raise_for_status()
 
@@ -139,30 +139,34 @@ def download_pdf_from_ipfs(cid):
             with open(temp_path, "wb") as f:
                 f.write(response.content)
 
-            print(f"✅ Fetched from: {url}")
+            print(f"✅ Fetched PDF from: {url}")
             return temp_path
 
         except Exception as e:
-            print(f"❌ Failed with {url}: {e}")
+            print(f"❌ Gateway {url} failed: {e}")
             continue
 
-    raise Exception("All IPFS gateways failed.")
+    raise Exception("All IPFS gateways failed to retrieve the PDF.")
+
 
 def create_overlay(cid, reg_number):
-    qr_url = f"https://dissertationtest-cw6eyx69o-marshalls-projects-57ca710a.vercel.app/verify-certificate?reg_number={reg_number}&cid={cid}"
+    # Build a verification URL that points to your frontend (with query params)
+    qr_url = (
+        "https://dissertationtest-cw6eyx69o-marshalls-projects-57ca710a.vercel.app"
+        f"/verify-certificate?reg_number={reg_number}&cid={cid}"
+    )
 
+    # Create an in-memory PDF (single page) containing the QR + text
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
-
     c.setFont("Courier", 12)
     c.drawCentredString(300, 450, f"IPFS CID: {cid}")
     c.drawCentredString(300, 430, f"Reg Number: {reg_number}")
 
-    # Generate QR code
+    # Generate and embed the QR code
     qr = qrcode.make(qr_url)
     tmp_qr_path = os.path.join(tempfile.gettempdir(), "qr_temp.png")
     qr.save(tmp_qr_path)
-
     c.drawInlineImage(tmp_qr_path, 450, 50, width=100, height=100)
     os.remove(tmp_qr_path)
 
@@ -170,13 +174,15 @@ def create_overlay(cid, reg_number):
     buffer.seek(0)
     return buffer
 
+
 def merge_overlay(original_pdf_path, overlay_buffer):
     reader = PdfReader(original_pdf_path)
-    overlay_reader = PdfReader(overlay_buffer)
+    overlay_reader = PdfReader(overlay_buffer)  # this reads from BytesIO
     writer = PdfWriter()
 
     for i, page in enumerate(reader.pages):
         if i == 0:
+            # Merge overlay only onto page 1
             page.merge_page(overlay_reader.pages[0])
         writer.add_page(page)
 

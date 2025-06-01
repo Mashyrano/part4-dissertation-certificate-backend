@@ -183,44 +183,77 @@ def update_certificate_with_cid(request):
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=400)
 
+    start_time = time.time()
     try:
-        data = json.loads(request.body)
-        new_cid = data["new_cid"]
+        # ──────────────────────────────────────────────────────────
+        # Step 0: Parse incoming JSON
+        try:
+            data = json.loads(request.body)
+        except JSONDecodeError:
+            return JsonResponse({"error": "Request body is not valid JSON"}, status=400)
+
+        new_cid = data.get("new_cid")
+        if not new_cid:
+            return JsonResponse({"error": "new_cid is required"}, status=400)
+
         print(f"⏳ Received request with CID: {new_cid}")
 
+        # ──────────────────────────────────────────────────────────
         # Step 1: Fetch metadata JSON from IPFS
         json_url = f"https://gateway.pinata.cloud/ipfs/{new_cid}"
         meta_res = requests.get(json_url, timeout=15)
 
         if meta_res.status_code != 200:
-            raise Exception("❌ Failed to fetch metadata JSON")
+            body_snippet = meta_res.text[:500]
+            print(f"❌ IPFS metadata HTTP {meta_res.status_code}. Body:\n{body_snippet}")
+            raise Exception(f"Failed to fetch metadata JSON (HTTP {meta_res.status_code})")
 
-        metadata = meta_res.json()
+        try:
+            metadata = meta_res.json()
+        except JSONDecodeError:
+            body_snippet = meta_res.text[:500]
+            print(f"❌ IPFS metadata was not JSON. Body (first 500 chars):\n{body_snippet}")
+            raise Exception("Failed to parse metadata JSON from IPFS")
+
         print(f"✅ Metadata fetched: {metadata}")
 
+        # ──────────────────────────────────────────────────────────
+        # Step 2: Extract fields from metadata
         pdf_url = metadata.get("pdf_ipfs_url")
         reg_number = metadata.get("reg_number")
-
         if not pdf_url or not reg_number:
-            raise Exception("❌ Missing pdf_ipfs_url or reg_number in metadata")
+            raise Exception("Missing 'pdf_ipfs_url' or 'reg_number' in metadata")
 
-        # Step 2: Download original PDF
+        # ──────────────────────────────────────────────────────────
+        # Step 3: Download original PDF from IPFS (try multiple gateways)
         pdf_cid = pdf_url.split("/")[-1]
         pdf_path = download_pdf_from_ipfs(pdf_cid)
-        print(f"✅ PDF downloaded: {pdf_path}")
+        print(f"✅ PDF downloaded to: {pdf_path}")
 
-        # Step 3: Generate overlay with QR + reg_number
+        # ──────────────────────────────────────────────────────────
+        # Step 4: Create an overlay (canvas) containing QR + reg_number
         overlay_buffer = create_overlay(new_cid, reg_number)
-        print("✅ Overlay created")
+        print("✅ Overlay created in memory")
 
-        # Step 4: Merge overlay with PDF
+        # ──────────────────────────────────────────────────────────
+        # Step 5: Merge overlay onto page 1 of the original PDF
         final_pdf_path = merge_overlay(pdf_path, overlay_buffer)
-        print(f"✅ Final PDF ready at: {final_pdf_path}")
+        print(f"✅ Final merged PDF: {final_pdf_path}")
 
-        return FileResponse(open(final_pdf_path, "rb"), as_attachment=True, filename="updated_certificate.pdf")
+        elapsed = time.time() - start_time
+        print(f"🚀 Total time: {elapsed:.2f}s")
+
+        # ──────────────────────────────────────────────────────────
+        # Step 6: Return merged PDF as FileResponse
+        return FileResponse(
+            open(final_pdf_path, "rb"),
+            as_attachment=True,
+            filename="updated_certificate.pdf",
+        )
 
     except Exception as e:
-        print("❌ Error in update_certificate_with_cid:", str(e))
+        elapsed = time.time() - start_time
+        print(f"❌ Error in update_certificate_with_cid after {elapsed:.2f}s: {e}")
         return JsonResponse({"error": str(e)}, status=500)
 
 #### mass upload
