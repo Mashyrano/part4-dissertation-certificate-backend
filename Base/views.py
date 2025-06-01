@@ -186,32 +186,36 @@ def update_certificate_with_cid(request):
     try:
         data = json.loads(request.body)
         new_cid = data["new_cid"]
-        print(f"⏳ Trying: https://ipfs.io/ipfs/{new_cid}")
+        print(f"⏳ Received request with CID: {new_cid}")
 
-        # Step 1: Download original PDF
-        pdf_path = download_pdf_from_ipfs(new_cid)
-        print(f"✅ PDF downloaded: {pdf_path}")
-
-        # Step 2: Fetch metadata
+        # Step 1: Fetch metadata JSON from IPFS
         json_url = f"https://gateway.pinata.cloud/ipfs/{new_cid}"
-        meta_res = requests.get(json_url)
+        meta_res = requests.get(json_url, timeout=15)
+
         if meta_res.status_code != 200:
             raise Exception("❌ Failed to fetch metadata JSON")
 
         metadata = meta_res.json()
         print(f"✅ Metadata fetched: {metadata}")
 
+        pdf_url = metadata.get("pdf_ipfs_url")
         reg_number = metadata.get("reg_number")
-        if not reg_number:
-            raise Exception("❌ Missing reg_number in metadata")
 
-        # Step 3: Create overlay with reg_number and cid
+        if not pdf_url or not reg_number:
+            raise Exception("❌ Missing pdf_ipfs_url or reg_number in metadata")
+
+        # Step 2: Download original PDF
+        pdf_cid = pdf_url.split("/")[-1]
+        pdf_path = download_pdf_from_ipfs(pdf_cid)
+        print(f"✅ PDF downloaded: {pdf_path}")
+
+        # Step 3: Generate overlay with QR + reg_number
         overlay_buffer = create_overlay(new_cid, reg_number)
         print("✅ Overlay created")
 
-        # Step 4: Merge overlay and return final PDF
+        # Step 4: Merge overlay with PDF
         final_pdf_path = merge_overlay(pdf_path, overlay_buffer)
-        print(f"✅ Merged PDF created at: {final_pdf_path}")
+        print(f"✅ Final PDF ready at: {final_pdf_path}")
 
         return FileResponse(open(final_pdf_path, "rb"), as_attachment=True, filename="updated_certificate.pdf")
 
