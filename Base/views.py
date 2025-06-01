@@ -186,28 +186,37 @@ def update_certificate_with_cid(request):
     try:
         data = json.loads(request.body)
         new_cid = data["new_cid"]
+        print(f"⏳ Trying: https://ipfs.io/ipfs/{new_cid}")
 
-        # Step 1: Download original certificate PDF from IPFS
+        # Step 1: Download original PDF
         pdf_path = download_pdf_from_ipfs(new_cid)
+        print(f"✅ PDF downloaded: {pdf_path}")
 
-        # Step 2: Fetch metadata from IPFS to get reg number
+        # Step 2: Fetch metadata
         json_url = f"https://gateway.pinata.cloud/ipfs/{new_cid}"
-        response = requests.get(json_url)
-        if response.status_code != 200:
-            raise Exception("Could not fetch metadata JSON")
-        reg_number = response.json().get("reg_number")
+        meta_res = requests.get(json_url)
+        if meta_res.status_code != 200:
+            raise Exception("❌ Failed to fetch metadata JSON")
+
+        metadata = meta_res.json()
+        print(f"✅ Metadata fetched: {metadata}")
+
+        reg_number = metadata.get("reg_number")
         if not reg_number:
-            raise Exception("Missing reg_number in metadata")
+            raise Exception("❌ Missing reg_number in metadata")
 
-        # Step 3: Create overlay with QR code
+        # Step 3: Create overlay with reg_number and cid
         overlay_buffer = create_overlay(new_cid, reg_number)
+        print("✅ Overlay created")
 
-        # Step 4: Merge and return final certificate
+        # Step 4: Merge overlay and return final PDF
         final_pdf_path = merge_overlay(pdf_path, overlay_buffer)
+        print(f"✅ Merged PDF created at: {final_pdf_path}")
 
         return FileResponse(open(final_pdf_path, "rb"), as_attachment=True, filename="updated_certificate.pdf")
 
     except Exception as e:
+        print("❌ Error in update_certificate_with_cid:", str(e))
         return JsonResponse({"error": str(e)}, status=500)
 
 #### mass upload
