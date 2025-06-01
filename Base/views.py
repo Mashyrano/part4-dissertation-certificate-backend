@@ -14,6 +14,7 @@ from django.core.files.storage import default_storage
 from concurrent.futures import ThreadPoolExecutor
 import tempfile, os, json, csv, hashlib
 from django.http import HttpResponse
+import time
 
 from .helper import generate_certificate_pdf_local, process_single_entry
 from .helper import upload_to_pinata, download_pdf_from_ipfs, merge_overlay, create_overlay
