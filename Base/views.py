@@ -1,5 +1,6 @@
 from django.http import JsonResponse, FileResponse
 from django.views.decorators.csrf import csrf_exempt
+import requests
 from .models import PendingInstitution  # Or whatever your model is
 from .serializers import PendingInstitutionSerializer
 from rest_framework.decorators import api_view
@@ -92,12 +93,16 @@ def get_institution_by_address(request):
         return Response({"error": "Ethereum address is required"}, status=400)
 
     try:
-        institution = get_object_or_404(PendingInstitution, ethereum_address__iexact=eth_address, approved=True, revoked=False)
+        institution = PendingInstitution.objects.get(
+            ethereum_address__iexact=eth_address,
+            approved=True,
+            revoked=False
+        )
         return Response({
             "id": institution.id,
             "name": institution.name,
         })
-    except:
+    except PendingInstitution.DoesNotExist:
         return Response({"error": "Institution not found"}, status=404)
 
 @csrf_exempt
@@ -182,14 +187,22 @@ def update_certificate_with_cid(request):
         data = json.loads(request.body)
         new_cid = data["new_cid"]
 
-        # 1. Download original PDF from IPFS
+        # Step 1: Download original certificate PDF from IPFS
         pdf_path = download_pdf_from_ipfs(new_cid)
 
-        # 2. Generate overlay with new QR + CID
-        new_verification_url = f"https://gateway.pinata.cloud/ipfs/{new_cid}"
-        overlay_buffer = create_overlay(new_verification_url, new_cid)
+        # Step 2: Fetch metadata from IPFS to get reg number
+        json_url = f"https://gateway.pinata.cloud/ipfs/{new_cid}"
+        response = requests.get(json_url)
+        if response.status_code != 200:
+            raise Exception("Could not fetch metadata JSON")
+        reg_number = response.json().get("reg_number")
+        if not reg_number:
+            raise Exception("Missing reg_number in metadata")
 
-        # 3. Merge and return the new updated certificate
+        # Step 3: Create overlay with QR code
+        overlay_buffer = create_overlay(new_cid, reg_number)
+
+        # Step 4: Merge and return final certificate
         final_pdf_path = merge_overlay(pdf_path, overlay_buffer)
 
         return FileResponse(open(final_pdf_path, "rb"), as_attachment=True, filename="updated_certificate.pdf")

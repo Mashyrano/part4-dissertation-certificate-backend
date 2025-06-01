@@ -148,17 +148,24 @@ def download_pdf_from_ipfs(cid):
 
     raise Exception("All IPFS gateways failed.")
 
+def create_overlay(cid, reg_number):
+    # Construct frontend QR verification URL
+    qr_url = f"https://dissertationtest-cw6eyx69o-marshalls-projects-57ca710a.vercel.app/verify-certificate?reg_number={reg_number}&cid={cid}"
 
-def create_overlay(qr_url, cid):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
 
+    # Draw CID as text
     c.setFont("Courier", 12)
-    c.drawCentredString(300, 450, f"ipfs-CID: {cid}")
+    c.drawCentredString(300, 450, f"IPFS CID: {cid}")
+    c.drawCentredString(300, 430, f"Reg Number: {reg_number}")
 
+    # Generate QR code
     qr = qrcode.make(qr_url)
     tmp_qr_path = os.path.join(tempfile.gettempdir(), "qr_temp.png")
     qr.save(tmp_qr_path)
+
+    # Add QR to overlay
     c.drawInlineImage(tmp_qr_path, 450, 50, width=100, height=100)
     os.remove(tmp_qr_path)
 
