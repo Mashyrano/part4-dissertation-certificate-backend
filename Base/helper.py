@@ -160,8 +160,8 @@ def create_overlay(cid, reg_number):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
     c.setFont("Courier", 12)
-    c.drawCentredString(300, 450, f"IPFS CID: {cid}")
-    c.drawCentredString(300, 430, f"Reg Number: {reg_number}")
+    # c.drawCentredString(300, 450, f"IPFS CID: {cid}")
+    # c.drawCentredString(300, 430, f"Reg Number: {reg_number}")
 
     # Generate and embed the QR code
     qr = qrcode.make(qr_url)
