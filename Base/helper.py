@@ -13,9 +13,6 @@ import json
 PINATA_JWT = os.getenv("PINATA_JWT")
 
 def upload_to_pinata(file_path):
-    print("PINATA_JWT loaded:", PINATA_JWT)  # 🔍 TEMPORARY DEBUG
-    if not PINATA_JWT:
-        raise Exception("Pinata JWT not found in environment variables")
     url = "https://api.pinata.cloud/pinning/pinFileToIPFS"
     headers = {
         "Authorization": f"{PINATA_JWT}",
