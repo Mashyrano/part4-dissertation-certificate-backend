@@ -37,6 +37,9 @@ def register_institution_request(request):
         if PendingInstitution.objects.filter(email__iexact=email).exists():
             return JsonResponse({"error": "This email has already been used to request registration."}, status=400)
 
+        if PendingInstitution.objects.filter(ethereum_address__iexact=eth_address).exists():
+            return JsonResponse({"error": "An institution with this address has already requested registration."}, status=400)
+        
 
         # Save to model (example assumes you have a model named InstitutionRequest)
         req = PendingInstitution.objects.create(
